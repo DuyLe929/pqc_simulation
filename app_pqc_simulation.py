@@ -5,6 +5,8 @@ import statistics
 import sys
 import time
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import streamlit as st
@@ -13,7 +15,7 @@ from streamlit.web import cli as stcli
 # ------------------------------------------------------------------------------
 # 0. AUTO-LAUNCH STREAMLIT WHEN RUN VIA: python app_pqc_simulation.py
 # ------------------------------------------------------------------------------
-if not st.runtime.exists():
+if __name__ == "__main__" and not st.runtime.exists():
     PORT = "8888"
     print("=========================================================================")
     print("   KHOI CHAY MO PHONG ML-DSA (NIST FIPS 204)")
