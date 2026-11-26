@@ -1387,15 +1387,11 @@ with tab1:
 
     with col_k2:
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Thời gian KeyGen", f"{k['kg_time_ms']:.3f} ms", delta="OpenSSL 3.5")
-        m2.metric("Seed gốc ξ (Lưu đĩa)", f"{len(k['priv_raw'])} B", delta=f"PKCS#8 = {len(k['priv_der'])} B")
-        m3.metric("Public Key (Raw)", f"{len(k['pub_raw']):,} B", delta=f"DER = {len(k['pub_der']):,} B")
+        m1.metric("Thời gian KeyGen", f"{k['kg_time_ms']:.3f} ms")
+        m2.metric("Seed gốc ξ (Lưu đĩa)", f"{len(k['priv_raw'])} B")
+        m3.metric("Public Key (Raw)", f"{len(k['pub_raw']):,} B")
         if tr:
-            m4.metric(
-                "Expanded SK (RAM)",
-                f"{tr['sk_layout']['expanded_total']:,} B",
-                delta="Khớp OpenSSL 100%" if k["bit_exact"] else "Check",
-            )
+            m4.metric("Expanded SK (RAM)", f"{tr['sk_layout']['expanded_total']:,} B")
         else:
             m4.metric("Chữ ký chuẩn", f"{mod_info['sig_len']:,} B")
 
@@ -1852,9 +1848,9 @@ with tab2:
                 st.caption("Tính toàn vẹn được ML-DSA bảo vệ.")
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Tải ML-KEM (PK + CT)", f"{wm['pk_kem_bytes'] + wm['ct_kem_bytes']:,} B", delta=f"{hres['kem_name']}" if hres["enable_mlkem"] else "Đang tắt")
-        m2.metric("Tải ML-DSA (PK + Sig)", f"{wm['pk_dsa_bytes'] + wm['sig_dsa_bytes']:,} B", delta=f"{hres['dsa_name']}" if hres["enable_mldsa"] else "Đang tắt")
-        m3.metric("Tổng tải bắt tay", f"{wm['total_handshake_bytes']:,} B", delta=f"{wm['tcp_segments']} gói TCP ({wm['initcwnd_pct']:.1f}% cwnd)")
+        m1.metric("Tải ML-KEM (PK + CT)", f"{wm['pk_kem_bytes'] + wm['ct_kem_bytes']:,} B" if hres["enable_mlkem"] else "Tắt")
+        m2.metric("Tải ML-DSA (PK + Sig)", f"{wm['pk_dsa_bytes'] + wm['sig_dsa_bytes']:,} B" if hres["enable_mldsa"] else "Tắt")
+        m3.metric("Tổng tải bắt tay", f"{wm['total_handshake_bytes']:,} B")
         m4.metric("Thời gian Verify ML-DSA", f"{tm['dsa_verify_ms']:.3f} ms" if hres["enable_mldsa"] else "Tắt")
 
         with st.expander("Nhật ký giao thức chi tiết (Protocol Trace)"):
