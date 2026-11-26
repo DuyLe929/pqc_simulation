@@ -159,14 +159,14 @@ def run_hybrid_mitm_simulation(
         timings["dsa_sign_ms"] = (time.perf_counter() - t0) * 1000.0
         timeline.append(
             f"[CLIENT] Ký trực tiếp gói tin bằng {dsa_name} (Sig={len(payload_sig):,} B, "
-            f"{timings['dsa_sign_ms']:.3f} ms) nhưng KHÔNG mã hóa ML-KEM/AES — gửi trần ra mạng!"
+            f"{timings['dsa_sign_ms']:.3f} ms) ở dạng bản rõ (chưa mã hóa ML-KEM/AES)."
         )
 
-        # Hacker always sees 100% plaintext on the wire!
+        # Adversary observes plaintext on the wire
         hacker_sniffed = payload_bytes
         timeline.append(
-            f"[HACKER] Nghe lén đường truyền -> ĐỌC TRỌN VẸN 100% BẢN RÕ ({len(hacker_sniffed)} B) "
-            "vì không có ML-KEM + AES mã hóa!"
+            f"[MITM] Nghe lén đường truyền -> đọc được toàn bộ bản rõ ({len(hacker_sniffed)} B) "
+            "do chưa mã hóa bằng ML-KEM + AES."
         )
 
         wire_payload = payload_bytes
@@ -175,12 +175,12 @@ def run_hybrid_mitm_simulation(
         if attack_mode in ("mitm_kem_swap", "mitm_payload"):
             wire_payload = tampered_payload_bytes
             timeline.append(
-                "[HACKER] Thử tráo / sửa nội dung gói tin trên đường truyền (không có Private Key ML-DSA)."
+                "[MITM] Thay đổi nội dung gói tin trên đường truyền (không có Private Key ML-DSA)."
             )
         elif attack_mode == "sig_bitflip":
             wire_sig, flip_idx, flip_label = flip_signature_region(payload_sig, dsa_name, sig_tamper_region)
             flipped_info = {"byte_index": flip_idx, "region": sig_tamper_region, "label": flip_label}
-            timeline.append(f"[HACKER] Lật 1 bit trong chữ ký {dsa_name} tại {flip_label}.")
+            timeline.append(f"[MITM] Đảo 1 bit trong chữ ký {dsa_name} tại {flip_label}.")
 
         t0 = time.perf_counter()
         try:
@@ -192,13 +192,13 @@ def run_hybrid_mitm_simulation(
 
         if mldsa_ok:
             timeline.append(
-                f"[SERVER] Xác minh {dsa_name} HỢP LỆ ({timings['dsa_verify_ms']:.3f} ms) -> "
-                "Dữ liệu nguyên vẹn, NHƯNG bí mật đã bị Hacker đọc lén trên đường truyền!"
+                f"[SERVER] Xác minh {dsa_name} hợp lệ ({timings['dsa_verify_ms']:.3f} ms) -> "
+                "Dữ liệu giữ nguyên vẹn, nhưng tính bí mật chưa được bảo vệ trên kênh truyền."
             )
         else:
             timeline.append(
-                f"[SERVER] Xác minh {dsa_name} THẤT BẠI (InvalidSignature, {timings['dsa_verify_ms']:.3f} ms) -> "
-                "CHẶN ĐỨNG hành vi sửa/tráo gói tin của Hacker! (Tuy nhiên bản rõ gốc vẫn đã bị Hacker đọc thấy)."
+                f"[SERVER] Xác minh {dsa_name} thất bại (InvalidSignature, {timings['dsa_verify_ms']:.3f} ms) -> "
+                "Từ chối gói tin đã bị chỉnh sửa (tuy nhiên bản rõ ban đầu vẫn bị lộ khi truyền)."
             )
 
         total_hs = len(client_dsa_pk_raw) + len(payload_sig)
@@ -273,10 +273,10 @@ def run_hybrid_mitm_simulation(
     else:
         timings["dsa_sign_ms"] = 0.0
         timeline.append(
-            "[SERVER] CẢNH BÁO: Tắt xác thực ML-DSA — gửi trần pk_KEM ra mạng không có chữ ký!"
+            "[SERVER] Lưu ý: Đang tắt xác thực ML-DSA — khóa pk_KEM được gửi đi không kèm chữ ký."
         )
 
-    # 2. Transit Server -> Client (Hacker intercepts)
+    # 2. Transit Server -> Client (MITM interception)
     wire_kem_pk_raw = server_kem_pk_raw
     wire_sig = server_sig
     hacker_kem_sk = None
@@ -287,14 +287,14 @@ def run_hybrid_mitm_simulation(
         hacker_kem_pk_raw = hacker_kem_sk.public_key().public_bytes_raw()
         wire_kem_pk_raw = hacker_kem_pk_raw
         timeline.append(
-            f"[HACKER/MITM] Chặn gói ServerHello -> TRÁO pk_KEM_Server bằng pk_KEM_Hacker "
-            f"({len(hacker_kem_pk_raw):,} B)!"
+            f"[MITM] Chặn gói ServerHello -> thay thế pk_KEM_Server bằng pk_KEM_Adversary "
+            f"({len(hacker_kem_pk_raw):,} B)."
         )
     elif attack_mode == "sig_bitflip" and enable_mldsa and wire_sig is not None:
         wire_sig, flip_idx, flip_label = flip_signature_region(wire_sig, dsa_name, sig_tamper_region)
         flipped_info = {"byte_index": flip_idx, "region": sig_tamper_region, "label": flip_label}
         timeline.append(
-            f"[HACKER/MITM] Giữ nguyên pk_KEM nhưng lật 1 bit chữ ký {dsa_name} tại {flip_label}."
+            f"[MITM] Giữ nguyên pk_KEM nhưng đảo 1 bit chữ ký {dsa_name} tại {flip_label}."
         )
 
     # 3. Client verifies ML-DSA signature over (Transcript || received pk_KEM)
@@ -318,11 +318,11 @@ def run_hybrid_mitm_simulation(
 
         if not mldsa_verified:
             timeline.append(
-                f"[CLIENT] Xác minh {dsa_name} THẤT BẠI (InvalidSignature) trong "
-                f"{timings['dsa_verify_ms']:.3f} ms!"
+                f"[CLIENT] Xác minh {dsa_name} thất bại (InvalidSignature) trong "
+                f"{timings['dsa_verify_ms']:.3f} ms."
             )
             timeline.append(
-                "[CLIENT] NGẮT KẾT NỐI NGAY TẠI BƯỚC BẮT TAY — KHÔNG Encapsulate, KHÔNG gửi dữ liệu!"
+                "[CLIENT] Ngắt kết nối tại bước bắt tay — dừng trước khi đóng gói ML-KEM và không truyền dữ liệu."
             )
             sig_len = len(server_sig) if server_sig else 0
             _, sample_ct = server_kem_pk.encapsulate()
@@ -361,13 +361,13 @@ def run_hybrid_mitm_simulation(
                 "timeline": timeline,
             }
         timeline.append(
-            f"[CLIENT] Xác minh {dsa_name} HỢP LỆ trong {timings['dsa_verify_ms']:.3f} ms "
-            "-> Khóa pk_KEM chắc chắn thuộc về Server thật."
+            f"[CLIENT] Xác minh {dsa_name} hợp lệ trong {timings['dsa_verify_ms']:.3f} ms "
+            "-> Xác nhận khóa pk_KEM thuộc về Server hợp lệ."
         )
     else:
         timings["dsa_verify_ms"] = 0.0
         timeline.append(
-            "[CLIENT] Không có chữ ký ML-DSA để kiểm chứng -> Tin mù quáng vào pk_KEM nhận được!"
+            "[CLIENT] Không có chữ ký ML-DSA để kiểm chứng -> chấp nhận trực tiếp pk_KEM nhận được."
         )
 
     # 4. Client runs ML-KEM Encapsulation & AES-256-GCM encryption
@@ -395,10 +395,10 @@ def run_hybrid_mitm_simulation(
         assert hacker_ss == client_ss
         hacker_decrypted = AESGCM(hacker_ss).decrypt(aes_nonce, aes_ct_client, associated_data=b"PQC-DATA")
         timeline.append(
-            f"[HACKER/MITM] Giải gói CT bằng sk_KEM_Hacker -> THU ĐƯỢC ĐÚNG KHÓA PHIÊN `{hacker_ss[:8].hex()}...`!"
+            f"[MITM] Giải gói CT bằng sk_KEM_Adversary -> thu được khóa phiên `{hacker_ss[:8].hex()}...`."
         )
         timeline.append(
-            f"[HACKER/MITM] GIẢI MÃ THÀNH CÔNG 100% BẢN RÕ ({len(hacker_decrypted)} B) VÀ CHÈN NỘI DUNG GIẢ MẠO!"
+            f"[MITM] Giải mã được bản rõ ({len(hacker_decrypted)} B) và thay thế bằng nội dung giả mạo."
         )
         hacker_to_server_ss, wire_ct_to_server = server_kem_pk.encapsulate()
         wire_nonce_to_server = os.urandom(12)
@@ -406,14 +406,14 @@ def run_hybrid_mitm_simulation(
             wire_nonce_to_server, tampered_payload_bytes, associated_data=b"PQC-DATA"
         )
         timeline.append(
-            "[HACKER/MITM] Mã hóa gói tin giả bằng khóa phiên mới tới Server thật và chuyển tiếp âm thầm..."
+            "[MITM] Mã hóa lại gói tin giả mạo bằng khóa phiên lập với Server thật và chuyển tiếp."
         )
     elif attack_mode == "mitm_payload":
         corrupted = bytearray(wire_aes_to_server)
         corrupted[0] ^= 0xFF
         wire_aes_to_server = bytes(corrupted)
         timeline.append(
-            "[HACKER/MITM] Không biết khóa phiên nên sửa trực tiếp 1 byte trong bản mã AES-256-GCM trên đường truyền."
+            "[MITM] Không có khóa phiên nên sửa trực tiếp 1 byte trong bản mã AES-256-GCM trên kênh truyền."
         )
 
     # 6. Server decapsulates ML-KEM & decrypts AES-256-GCM
@@ -429,20 +429,20 @@ def run_hybrid_mitm_simulation(
         )
         aes_tag_valid = True
         timeline.append(
-            f"[SERVER] Giải gói {kem_name} ({timings['kem_decap_ms']:.3f} ms) & giải mã AES-256-GCM THÀNH CÔNG "
+            f"[SERVER] Giải gói {kem_name} ({timings['kem_decap_ms']:.3f} ms) và giải mã AES-256-GCM thành công "
             f"(Khóa phiên `{server_ss[:8].hex()}...`)."
         )
     except InvalidTag:
         aes_tag_valid = False
         timeline.append(
-            f"[SERVER] Giải gói {kem_name} ({timings['kem_decap_ms']:.3f} ms) nhưng xác thực thẻ AES-256-GCM THẤT BẠI (InvalidTag) -> HỦY GÓI TIN!"
+            f"[SERVER] Giải gói {kem_name} ({timings['kem_decap_ms']:.3f} ms) nhưng xác thực thẻ AES-256-GCM thất bại (InvalidTag) -> hủy gói tin."
         )
 
     compromised = (hacker_decrypted is not None) and aes_tag_valid and (server_received != payload_bytes)
     if compromised:
         timeline.append(
-            "[HẬU QUẢ NGHIÊM TRỌNG] Server tin tưởng nạp gói tin GIẢ MẠO của Hacker mà không hay biết — "
-            "chứng minh ML-KEM + AES đứng một mình KHÔNG chống được MITM tráo khóa!"
+            "[KẾT LUẬN] Server tiếp nhận gói tin đã bị chỉnh sửa mà không phát hiện — "
+            "cho thấy ML-KEM + AES khi thiếu chữ ký xác thực không ngăn được tấn công MITM tráo khóa."
         )
 
     attack_blocked = (attack_mode != "none") and (not compromised) and (not aes_tag_valid)
@@ -1360,7 +1360,7 @@ st.caption(
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "1. Sinh khóa",
-    "2. ML-DSA & ML-KEM",
+    "2. Xác thực & Phòng thủ MITM",
     "3. Hiệu năng CPU",
     "4. Chuỗi PKI X.509",
     "5. Độ co giãn tệp",
@@ -1507,7 +1507,7 @@ with tab1:
 # TAB 2: ML-DSA vs ML-KEM (MITM PROTOCOL) & MODULE-LATTICE WHITE-BOX
 # ==============================================================================
 with tab2:
-    st.markdown("#### So sánh thực chiến: `ML-DSA (FIPS 204)` vs `ML-KEM (FIPS 203)`")
+    st.markdown("#### Phân tích vai trò bảo mật: `ML-DSA (FIPS 204)` và `ML-KEM (FIPS 203)` trước tấn công MITM")
 
     scenario_presets = {
         "Định tuyến Core Gateway (10.0.0.1 -> 10.0.0.2)": {
@@ -1520,26 +1520,26 @@ with tab2:
             ),
             "mitm_tamper": (
                 "10.0.0.1",
-                "10.0.0.2  ! [HACKER DOI GATEWAY]",
+                "10.0.0.2  ! [MITM: Thay doi Gateway]",
             ),
             "server_id": "core-r1.gateway.local",
             "lang": "text",
         },
-        "Chuyển tiền MB Bank 24/7 (A -> B, 50,000,000 VND)": {
-            "short_name": "Lệnh chuyển tiền MB Bank",
+        "Giao dịch chuyển khoản (A -> B, 50,000,000 VND)": {
+            "short_name": "Lệnh chuyển khoản",
             "payload": (
-                "MB BANK - CHUYEN TIEN 24/7\n"
+                "LENH CHUYEN KHOAN LIEN NGAN HANG\n"
                 "Ma GD   : FT263298812045\n"
-                "Tu TK   : 0912345678 - A (MB)\n"
-                "Den TK  : 1029384756 - B (VCB)\n"
+                "Tu TK   : 0912345678 - Tai khoan A\n"
+                "Den TK  : 1029384756 - Tai khoan B\n"
                 "So tien : 50,000,000 VND\n"
                 "Noi dung: A chuyen tien cho B"
             ),
             "mitm_tamper": (
-                "Den TK  : 1029384756 - B (VCB)",
-                "Den TK  : 9999888877 - HACKER [BI DOI!]",
+                "Den TK  : 1029384756 - Tai khoan B",
+                "Den TK  : 9999888877 - [MITM: Sua tai khoan]",
             ),
-            "server_id": "api-napas247.mbbank.com.vn",
+            "server_id": "api-gateway.bank.local",
             "lang": "text",
         },
     }
@@ -1595,13 +1595,13 @@ with tab2:
 
         with c_ctrl3:
             attack_options = {
-                "Hacker tráo khóa pk_KEM / sửa gói (MITM)": "mitm_kem_swap",
-                "Không tấn công (Hacker chỉ đứng nghe lén)": "none",
-                "Hacker sửa 1 byte dữ liệu trên đường truyền": "mitm_payload",
-                "Hacker lật 1 bit chữ ký ML-DSA": "sig_bitflip",
+                "Tráo khóa công khai KEM / giả mạo (MITM)": "mitm_kem_swap",
+                "Không can thiệp (Chỉ nghe lén thụ động)": "none",
+                "Sửa 1 byte dữ liệu trên đường truyền": "mitm_payload",
+                "Đảo 1 bit chữ ký ML-DSA": "sig_bitflip",
             }
             attack_label = st.radio(
-                "3. Hành động của Hacker",
+                "3. Kịch bản tấn công (Adversary)",
                 list(attack_options.keys()),
                 index=0,
                 key="hybrid_attack_radio",
@@ -1639,7 +1639,7 @@ with tab2:
         tampered_text = (
             admin_payload.replace(old_part, new_part)
             if old_part in admin_payload
-            else admin_payload + "\n! [HACKER_INJECTED]"
+            else admin_payload + "\n! [MITM_INJECTED]"
         )
 
         cache_key = (
@@ -1671,33 +1671,33 @@ with tab2:
         if not hres["enable_mlkem"]:
             if hres["attack_blocked"]:
                 st.warning(
-                    f"**CHẶN SỬA NHƯNG LỘ BÍ MẬT (chỉ có `{hres['dsa_name']}`, thiếu ML-KEM)** — "
-                    "ML-DSA chặn được lệnh giả (`InvalidSignature`), nhưng Hacker vẫn đọc trọn 100% bản rõ do không mã hóa."
+                    f"**ĐẢM BẢO TOÀN VẸN NHƯNG CHƯA BẢO MẬT BÍ MẬT (chỉ có `{hres['dsa_name']}`, thiếu ML-KEM)** — "
+                    "ML-DSA từ chối gói tin bị sửa (`InvalidSignature`), nhưng bên thứ ba vẫn đọc được bản rõ do dữ liệu chưa mã hóa."
                 )
             else:
                 st.warning(
-                    f"**LỘ 100% BẢN RÕ (chỉ có `{hres['dsa_name']}`, thiếu ML-KEM + AES)** — "
-                    "Dữ liệu đến Server nguyên vẹn nhưng truyền dạng bản rõ, Hacker nghe lén đọc được toàn bộ nội dung."
+                    f"**CHƯA BẢO MẬT TÍNH BÍ MẬT (chỉ có `{hres['dsa_name']}`, thiếu ML-KEM + AES)** — "
+                    "Dữ liệu tới Server nguyên vẹn nhưng truyền ở dạng bản rõ nên bên nghe lén thụ động có thể đọc được toàn bộ nội dung."
                 )
         elif hres["compromised"]:
             st.error(
-                f"**THẤT THỦ HOÀN TOÀN (chỉ có `{hres['kem_name']} + AES`, thiếu ML-DSA)** — "
-                "Hacker tráo khóa `pk_KEM` thành công, giải mã đọc 100% bản rõ và bơm lệnh giả vào Server."
+                f"**XÂM NHẬP THÀNH CÔNG (chỉ có `{hres['kem_name']} + AES`, thiếu ML-DSA)** — "
+                "Bên tấn công tráo khóa `pk_KEM` thành công, giải mã được bản rõ và chuyển tiếp nội dung giả mạo tới Server."
             )
         elif hres["handshake_aborted"]:
             st.success(
-                f"**PHÒNG VỆ THÀNH CÔNG — `{hres['dsa_name']}` chặn đứng Hacker trong {tm['dsa_verify_ms']:.3f} ms** — "
-                "Client ngắt kết nối ngay tại bước xác minh chữ ký; Hacker thu 0 bytes bản rõ."
+                f"**NGĂN CHẶN TẤN CÔNG — `{hres['dsa_name']}` phát hiện giả mạo trong {tm['dsa_verify_ms']:.3f} ms** — "
+                "Client ngắt kết nối ngay tại bước xác minh chữ ký; không phát sinh dữ liệu bản rõ trên đường truyền."
             )
         elif hres["attack_blocked"]:
             st.success(
-                f"**CHẶN SỬA BẢN MÃ (`{hres['blocked_by']}`)** — "
-                "Hacker không có khóa phiên nên sửa mù bản mã AES-256-GCM; Server phát hiện `InvalidTag` và hủy gói tin."
+                f"**PHÁT HIỆN SỬA ĐỔI BẢN MÃ (`{hres['blocked_by']}`)** — "
+                "Bên tấn công không có khóa phiên nên làm sai lệch bản mã AES-256-GCM; Server phát hiện `InvalidTag` và hủy gói tin."
             )
         else:
             st.success(
                 f"**PHIÊN TRUYỀN TIN AN TOÀN** — `{hres['kem_name']}` + AES-256 bảo mật nội dung"
-                + (f" và `{hres['dsa_name']}` xác thực danh tính Server thành công." if hres["enable_mldsa"] else " (kênh sạch, Hacker chưa tráo khóa).")
+                + (f" và `{hres['dsa_name']}` xác thực danh tính Server thành công." if hres["enable_mldsa"] else " (kênh sạch, không có can thiệp tráo khóa).")
             )
 
         pk_kem_b = wm["pk_kem_bytes"]
@@ -1710,99 +1710,99 @@ with tab2:
             if hres["attack_blocked"]:
                 steps_html = [
                     (C_BLUE, "BƯỚC 1 · KÝ XÁC THỰC", f"{hres['dsa_name']} (Tắt ML-KEM)",
-                     "Client ký số lên gói tin để chống sửa, nhưng gửi dạng <b>bản rõ trần</b>.",
-                     f"Sinh chữ ký <b>{sig_dsa_b:,} B</b> ({tm['dsa_sign_ms']:.2f} ms) — dữ liệu chưa mã hóa."),
-                    (C_AMBER, "BƯỚC 2 · NGHE LÉN BẢN RÕ", "Hacker đứng giữa",
-                     "Bắt gói tin trên đường truyền; do thiếu ML-KEM + AES nên không cần giải mã.",
-                     "<b>Đọc trọn 100% nội dung gốc</b> ngay khi gói tin đi qua mạng."),
-                    (C_RED, "BƯỚC 3 · THỬ SỬA GÓI TIN", "Hacker",
-                     "Sửa nội dung lệnh gửi sang Server nhưng không có Private Key ML-DSA để ký lại.",
-                     "Chữ ký cũ không còn khớp với dữ liệu đã bị thay đổi."),
+                     "Client ký số lên gói tin để bảo vệ toàn vẹn, nhưng gửi ở dạng <b>bản rõ</b>.",
+                     f"Sinh chữ ký <b>{sig_dsa_b:,} B</b> ({tm['dsa_sign_ms']:.2f} ms) — dữ liệu chưa được mã hóa."),
+                    (C_AMBER, "BƯỚC 2 · NGHE LÉN BẢN RÕ", "Bên thứ ba (MITM)",
+                     "Chặn bắt gói tin trên kênh truyền; do thiếu ML-KEM + AES nên đọc trực tiếp nội dung.",
+                     "<b>Đọc được toàn bộ nội dung gốc</b> ngay khi gói tin đi qua mạng."),
+                    (C_RED, "BƯỚC 3 · CAN THIỆP GÓI TIN", "Bên thứ ba (MITM)",
+                     "Chỉnh sửa nội dung gói tin gửi sang Server nhưng không có Private Key ML-DSA để ký lại.",
+                     "Chữ ký cũ không còn hợp lệ đối với nội dung đã sửa."),
                     (C_GREEN, "BƯỚC 4 · XÁC MINH CHỮ KÝ", f"{hres['dsa_name']} (Verify)",
-                     "Server dùng Public Key kiểm tra chữ ký trước khi chấp nhận lệnh.",
-                     f"Báo <b>InvalidSignature</b> ({tm['dsa_verify_ms']:.2f} ms) — hủy gói giả, nhưng bí mật đã lộ ở Bước 2."),
+                     "Server dùng Public Key kiểm tra chữ ký trước khi xử lý gói tin.",
+                     f"Báo <b>InvalidSignature</b> ({tm['dsa_verify_ms']:.2f} ms) — từ chối gói giả, nhưng bí mật đã lộ ở Bước 2."),
                 ]
             else:
                 steps_html = [
                     (C_BLUE, "BƯỚC 1 · KÝ XÁC THỰC", f"{hres['dsa_name']} (Tắt ML-KEM)",
                      "Client ký số lên gói tin để đảm bảo toàn vẹn, nhưng <b>không mã hóa nội dung</b>.",
-                     f"Gửi bản rõ + chữ ký <b>{sig_dsa_b:,} B</b> ({tm['dsa_sign_ms']:.2f} ms)."),
-                    (C_AMBER, "BƯỚC 2 · NGHE LÉN THỤ ĐỘNG", "Hacker đứng giữa",
-                     "Chỉ cần đứng nghe lén đường truyền (không sửa gói tin).",
-                     "<b>Đọc hết 100% bản rõ bí mật</b> vì thiếu ML-KEM + AES."),
+                     f"Gửi bản rõ kèm chữ ký <b>{sig_dsa_b:,} B</b> ({tm['dsa_sign_ms']:.2f} ms)."),
+                    (C_AMBER, "BƯỚC 2 · NGHE LÉN THỤ ĐỘNG", "Bên thứ ba (MITM)",
+                     "Chỉ nghe lén thụ động trên đường truyền (không thay đổi gói tin).",
+                     "<b>Đọc được toàn bộ bản rõ</b> do thiếu tầng mã hóa ML-KEM + AES."),
                     (C_GREEN, "BƯỚC 3 · XÁC MINH CHỮ KÝ", f"{hres['dsa_name']} (Verify)",
                      "Server kiểm tra chữ ký ML-DSA xác nhận nguồn gửi và tính toàn vẹn.",
                      f"Chữ ký hợp lệ ({tm['dsa_verify_ms']:.2f} ms) — dữ liệu không bị sửa."),
                     (C_AMBER, "BƯỚC 4 · ĐÁNH GIÁ AN NINH", "Thiếu mã hóa kênh",
-                     "Chỉ đạt Toàn vẹn &amp; Xác thực, không bảo vệ tính Bí mật.",
-                     "Cần ghép thêm <b>ML-KEM + AES-256</b> để mã hóa dữ liệu."),
+                     "Chỉ đạt Toàn vẹn &amp; Xác thực, chưa bảo vệ tính Bí mật.",
+                     "Cần kết hợp thêm <b>ML-KEM + AES-256</b> để mã hóa dữ liệu."),
                 ]
         elif hres["compromised"]:
             steps_html = [
-                (C_RED, "BƯỚC 1 · GỬI Ổ KHÓA TẠM", f"{hres['kem_name']} (Tắt ML-DSA)",
-                 "Server sinh ổ khóa tạm <code>pk_KEM</code> gửi ra mạng <b>không có chữ ký xác thực</b>.",
-                 f"Gửi trần <b>{pk_kem_b:,} B</b> — Client không thể biết ổ khóa này của ai."),
-                (C_RED, "BƯỚC 2 · TRÁO Ổ KHÓA", "Hacker đứng giữa",
-                 "Chặn <code>pk_KEM</code> của Server, thay bằng <code>pk_KEM_Hacker</code> gửi cho Client.",
-                 "Không có ML-DSA kiểm tra — Client <b>tin nhầm ổ khóa của Hacker</b>."),
+                (C_RED, "BƯỚC 1 · GỬI KHÓA CÔNG KHAI KEM", f"{hres['kem_name']} (Tắt ML-DSA)",
+                 "Server sinh khóa tạm <code>pk_KEM</code> gửi ra mạng <b>không kèm chữ ký xác thực</b>.",
+                 f"Gửi trần <b>{pk_kem_b:,} B</b> — Client chưa có cơ sở xác minh chủ sở hữu khóa."),
+                (C_RED, "BƯỚC 2 · CHẶN & THAY KHÓA", "Bên tấn công (MITM)",
+                 "Chặn <code>pk_KEM</code> của Server, thay bằng <code>pk_KEM_Adversary</code> gửi cho Client.",
+                 "Thiếu ML-DSA kiểm tra — Client <b>chấp nhận nhầm khóa của bên tấn công</b>."),
                 (C_RED, "BƯỚC 3 · TRAO KHÓA & MÃ HÓA", f"{hres['kem_name']} -> AES-256",
                  "Client chạy Encapsulate tạo khóa AES-256 và mã hóa gói tin gửi đi.",
-                 f"Khóa <code>{cli_k_short}</code> lập với <b>Hacker</b> — Hacker giải mã 100% và sửa gói."),
-                (C_RED, "BƯỚC 4 · BƠM LỆNH GIẢ", "Hacker -> Server",
-                 "Hacker dùng <code>pk_KEM</code> thật của Server mã hóa gói tin giả rồi chuyển tiếp.",
-                 f"Server giải mã (<code>{srv_k_short}</code>) và <b>nạp nhầm lệnh giả không báo lỗi</b>."),
+                 f"Khóa <code>{cli_k_short}</code> lập với bên tấn công — bên này giải mã và sửa được nội dung."),
+                (C_RED, "BƯỚC 4 · CHUYỂN TIẾP DỮ LIỆU GIẢ", "MITM -> Server",
+                 "Bên tấn công dùng <code>pk_KEM</code> thật của Server mã hóa lại gói tin giả rồi chuyển tiếp.",
+                 f"Server giải mã (<code>{srv_k_short}</code>) và <b>tiếp nhận dữ liệu giả mạo</b> do thiếu xác thực nguồn."),
             ]
         elif hres["handshake_aborted"]:
             act_txt = (
-                "Chặn và tráo <code>pk_KEM_Server</code> thành <code>pk_KEM_Hacker</code> (không có khóa bí mật ML-DSA)."
+                "Chặn và thay <code>pk_KEM_Server</code> bằng <code>pk_KEM_Adversary</code> (không có khóa bí mật ML-DSA)."
                 if hres["attack_mode"] == "mitm_kem_swap"
-                else "Giữ nguyên <code>pk_KEM</code> nhưng lật 1 bit trong chữ ký ML-DSA trên đường truyền."
+                else "Giữ nguyên <code>pk_KEM</code> nhưng đảo 1 bit trong chữ ký ML-DSA trên đường truyền."
             )
             steps_html = [
-                (C_BLUE, "BƯỚC 1 · TẠO KHÓA + KÝ DẤU", f"{hres['kem_name']} + {hres['dsa_name']}",
-                 "Server tạo ổ khóa tạm <code>pk_KEM</code> và dùng <b>ML-DSA ký xác nhận</b> chủ sở hữu.",
+                (C_BLUE, "BƯỚC 1 · TẠO KHÓA & KÝ XÁC THỰC", f"{hres['kem_name']} + {hres['dsa_name']}",
+                 "Server tạo khóa tạm <code>pk_KEM</code> và dùng <b>ML-DSA ký xác nhận</b> biên bản bắt tay.",
                  f"Gửi <code>pk_KEM</code> ({pk_kem_b:,} B) + Chữ ký ({sig_dsa_b:,} B) trong {tm['dsa_sign_ms']:.2f} ms."),
-                (C_AMBER, "BƯỚC 2 · HACKER CAN THIỆP", "Hacker đứng giữa",
+                (C_AMBER, "BƯỚC 2 · CAN THIỆP KÊNH TRUYỀN", "Bên tấn công (MITM)",
                  act_txt,
-                 "Gói bắt tay bị thay đổi — không còn khớp chữ ký ML-DSA của Server thật."),
+                 "Thông điệp bắt tay bị biến đổi — không còn khớp với chữ ký ML-DSA của Server."),
                 (C_GREEN, "BƯỚC 3 · XÁC MINH DANH TÍNH", f"{hres['dsa_name']} (Verify)",
-                 "Client kiểm tra chữ ký ML-DSA trên <code>pk_KEM</code> nhận được <b>trước khi mã hóa</b>.",
-                 f"Báo <b>InvalidSignature</b> ({tm['dsa_verify_ms']:.2f} ms) — <b>ngắt kết nối ngay</b>."),
-                (C_GREEN, "BƯỚC 4 · BẢO TOÀN DỮ LIỆU", "ML-KEM & AES (Chưa chạy)",
-                 "Hủy phiên ngay lập tức — không sinh khóa AES, không gửi dữ liệu ra mạng.",
-                 "<b>Hacker thu 0 bytes</b> — chặn đứng cả nghe lén lẫn giả mạo."),
+                 "Client kiểm tra chữ ký ML-DSA trên <code>pk_KEM</code> nhận được <b>trước khi đóng gói khóa</b>.",
+                 f"Báo <b>InvalidSignature</b> ({tm['dsa_verify_ms']:.2f} ms) — <b>ngắt kết nối</b>."),
+                (C_GREEN, "BƯỚC 4 · BẢO TOÀN DỮ LIỆU", "ML-KEM & AES (Chưa thực thi)",
+                 "Hủy phiên ngay tại bước bắt tay — không sinh khóa phiên, không truyền dữ liệu.",
+                 "<b>Dữ liệu rò rỉ = 0 bytes</b> — ngăn chặn đồng thời nghe lén và giả mạo."),
             ]
         elif hres["attack_blocked"]:
             steps_html = [
                 (C_BLUE, "BƯỚC 1 · BẮT TAY THÀNH CÔNG", f"{hres['kem_name']}" + (f" + {hres['dsa_name']}" if hres["enable_mldsa"] else ""),
-                 "Client &amp; Server thống nhất an toàn khóa phiên 32B chung nhờ ML-KEM.",
+                 "Client &amp; Server thiết lập an toàn khóa phiên 32B chung qua ML-KEM.",
                  f"Khóa AES-256 trùng khớp: <code>{cli_k_short}</code> (CT = {ct_kem_b:,} B)."),
                 (C_BLUE, "BƯỚC 2 · MÃ HÓA DỮ LIỆU", "AES-256-GCM",
-                 "Client dùng khóa phiên 32B mã hóa nội dung và gắn thẻ toàn vẹn GCM Tag.",
-                 "Dữ liệu trên đường truyền hoàn toàn là bản mã."),
-                (C_AMBER, "BƯỚC 3 · HACKER SỬA MÙ", "Hacker đứng giữa",
-                 "Không có khóa phiên để giải mã nên sửa bừa 1 byte trong bản mã.",
-                 "Làm hỏng thẻ xác thực toàn vẹn (GCM Tag)."),
-                (C_GREEN, "BƯỚC 4 · GIẢI MÃ & CHẶN LỖI", f"{hres['kem_name']} -> AES-256",
-                 "Server giải gói khóa phiên và kiểm tra thẻ xác thực AES-256-GCM trước khi đọc.",
-                 "Báo <b>InvalidTag</b> — hủy gói tin bị sửa, Hacker thu 0 bytes bản rõ."),
+                 "Client dùng khóa phiên 32B mã hóa nội dung và gắn thẻ xác thực GCM Tag.",
+                 "Dữ liệu truyền trên mạng ở dạng bản mã."),
+                (C_AMBER, "BƯỚC 3 · CAN THIỆP BẢN MÃ", "Bên tấn công (MITM)",
+                 "Không có khóa phiên để giải mã nên chỉnh sửa ngẫu nhiên 1 byte trong bản mã.",
+                 "Làm sai lệch thẻ xác thực toàn vẹn (GCM Tag)."),
+                (C_GREEN, "BƯỚC 4 · GIẢI MÃ & KIỂM TRA THẺ", f"{hres['kem_name']} -> AES-256",
+                 "Server giải gói khóa phiên và kiểm tra thẻ xác thực AES-256-GCM trước khi giải mã.",
+                 "Báo <b>InvalidTag</b> — loại bỏ gói tin bị sửa, không lộ bản rõ."),
             ]
         else:
             b1_mod = f"{hres['kem_name']} + {hres['dsa_name']}" if hres["enable_mldsa"] else f"{hres['kem_name']} (Tắt ML-DSA)"
-            b1_task = "Server tạo <code>pk_KEM</code> và dùng <b>ML-DSA ký xác nhận</b> chủ sở hữu." if hres["enable_mldsa"] else "Server tạo <code>pk_KEM</code> gửi trực tiếp (kênh đang sạch)."
+            b1_task = "Server tạo <code>pk_KEM</code> và dùng <b>ML-DSA ký xác nhận</b> chủ sở hữu." if hres["enable_mldsa"] else "Server tạo <code>pk_KEM</code> gửi trực tiếp (kênh không có can thiệp)."
             b2_mod = f"{hres['dsa_name']} (Verify)" if hres["enable_mldsa"] else "Bỏ qua xác minh"
-            b2_task = "Client kiểm tra chữ ký để chắc chắn <code>pk_KEM</code> đúng của Server thật." if hres["enable_mldsa"] else "Không bật ML-DSA nên Client tin luôn <code>pk_KEM</code> nhận được."
-            b2_res = f"Xác thực hợp lệ ({tm['dsa_verify_ms']:.2f} ms)." if hres["enable_mldsa"] else "Chỉ an toàn khi không có Hacker tráo khóa."
+            b2_task = "Client kiểm tra chữ ký để xác thực <code>pk_KEM</code> thuộc về Server." if hres["enable_mldsa"] else "Không bật ML-DSA nên Client chấp nhận trực tiếp <code>pk_KEM</code>."
+            b2_res = f"Xác thực hợp lệ ({tm['dsa_verify_ms']:.2f} ms)." if hres["enable_mldsa"] else "Chỉ an toàn khi không có tấn công tráo khóa."
             steps_html = [
                 (C_BLUE, "BƯỚC 1 · KHỞI TẠO PHIÊN", b1_mod, b1_task,
                  f"<code>pk_KEM</code> = {pk_kem_b:,} B" + (f" · Chữ ký = {sig_dsa_b:,} B." if hres["enable_mldsa"] else ".")),
                 (C_GREEN if hres["enable_mldsa"] else C_AMBER, "BƯỚC 2 · XÁC THỰC SERVER", b2_mod, b2_task, b2_res),
                 (C_CYAN, "BƯỚC 3 · TRAO KHÓA & MÃ HÓA", f"{hres['kem_name']} -> AES-256",
-                 "Client chạy Encapsulate tạo khóa chung 32B, rồi dùng <b>AES-256-GCM</b> mã hóa.",
+                 "Client chạy Encapsulate tạo khóa chung 32B, sau đó mã hóa bằng <b>AES-256-GCM</b>.",
                  f"Sinh khóa <code>{cli_k_short}</code> ({tm['kem_encap_ms']:.2f} ms), gửi CT ({ct_kem_b:,} B) + bản mã."),
-                (C_GREEN, "BƯỚC 4 · GIẢI GÓI & ĐỌC LỆNH", f"{hres['kem_name']} -> AES-256",
-                 "Server chạy Decapsulate lấy đúng khóa 32B rồi giải mã AES-256-GCM.",
-                 f"Khớp khóa <code>{srv_k_short}</code> ({tm['kem_decap_ms']:.2f} ms) — nhận đủ <b>100% nguyên bản</b>."),
+                (C_GREEN, "BƯỚC 4 · GIẢI GÓI & GIẢI MÃ", f"{hres['kem_name']} -> AES-256",
+                 "Server chạy Decapsulate khôi phục khóa 32B rồi giải mã AES-256-GCM.",
+                 f"Khớp khóa <code>{srv_k_short}</code> ({tm['kem_decap_ms']:.2f} ms) — nhận nguyên vẹn dữ liệu gốc."),
             ]
 
         _render_flow_cards(steps_html)
@@ -1819,33 +1819,33 @@ with tab2:
                 st.caption("Đã dừng ở Bước 3 — không sinh khóa phiên.")
 
         with c_mal:
-            st.markdown("**Hacker (Đứng giữa) thấy gì**")
+            st.markdown("**Bên thứ ba trên kênh truyền (MITM)**")
             if hres["mallory_decrypted"] is not None:
                 st.code(hres["mallory_decrypted"].decode("utf-8", errors="replace"), language=hres["lang"])
                 if not hres["enable_mlkem"]:
-                    st.caption("Đọc lén 100% bản rõ do thiếu ML-KEM + AES.")
+                    st.caption("Đọc được bản rõ do thiếu mã hóa ML-KEM + AES.")
                 else:
-                    st.caption(f"Chiếm được khóa AES: `{hres['mallory_ss_hex'][:16]}...`")
+                    st.caption(f"Thiết lập được khóa giả mạo: `{hres['mallory_ss_hex'][:16]}...`")
             elif hres["handshake_aborted"]:
-                st.code("[BỊ ML-DSA CHẶN ĐỨNG]\nDữ liệu thu được: 0 bytes", language="text")
-                st.caption("Không có cơ hội chạm vào dữ liệu.")
+                st.code("[PHIÊN BỊ HỦY TẠI BƯỚC XÁC MINH ML-DSA]\nDữ liệu thu được: 0 bytes", language="text")
+                st.caption("Kết nối bị ngắt trước khi thiết lập khóa phiên.")
             else:
-                st.code("[CHỈ THẤY BẢN MÃ AES-256-GCM]\nKhông giải mã được", language="text")
-                st.caption("Bảo mật nội dung nhờ ML-KEM + AES.")
+                st.code("[CHỈ QUAN SÁT ĐƯỢC BẢN MÃ AES-256-GCM]\nKhông giải mã được", language="text")
+                st.caption("Tính bí mật được bảo vệ bởi ML-KEM + AES.")
 
         with c_srv:
-            st.markdown("**Server thực sự nhận được**")
+            st.markdown("**Dữ liệu Server tiếp nhận**")
             if hres["server_received"] is not None:
                 st.code(hres["server_received"].decode("utf-8", errors="replace"), language=hres["lang"])
                 if hres["compromised"]:
-                    st.caption("Nạp nhầm lệnh giả của Hacker.")
+                    st.caption("Tiếp nhận dữ liệu đã bị chỉnh sửa do thiếu xác thực ML-DSA.")
                 elif not hres["enable_mlkem"]:
-                    st.caption("Nội dung đúng nhưng đã bị Hacker đọc lén.")
+                    st.caption("Nội dung toàn vẹn nhưng đã bị nghe lén trên kênh truyền.")
                 else:
-                    st.caption(f"Khớp 100% (Khóa `{hres['server_ss_hex'][:16]}...`)")
+                    st.caption(f"Khớp dữ liệu gốc (Khóa `{hres['server_ss_hex'][:16]}...`)")
             else:
-                st.code("[ĐÃ HỦY GÓI TIN / PHIÊN]\nKhông thực thi lệnh giả của Hacker", language="text")
-                st.caption("Tính toàn vẹn được ML-DSA bảo vệ.")
+                st.code("[ĐÃ HỦY GÓI TIN / PHIÊN]\nTừ chối xử lý dữ liệu không hợp lệ", language="text")
+                st.caption("Tính toàn vẹn được bảo vệ thành công.")
 
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Tải ML-KEM (PK + CT)", f"{wm['pk_kem_bytes'] + wm['ct_kem_bytes']:,} B" if hres["enable_mlkem"] else "Tắt")
@@ -2198,7 +2198,7 @@ with tab3:
             f"- **ML-DSA-65 vs RSA-2048:** KeyGen ML-DSA-65 nhanh hơn **{ratio_rsa:.1f} lần** ({rsa_kg:.2f} ms vs {mldsa_kg:.3f} ms); "
             f"tốc độ ký ({mldsa_sg:.3f} ms vs {rsa_sg:.3f} ms) ở cùng ngưỡng mili-giây.\n"
             f"- **Xác minh (Verify) ML-DSA-65:** Đạt **{mldsa_vf:.3f} ms** (~**{int(1000.0 / mldsa_vf) if mldsa_vf > 0 else 0:,} ops/s** trên 1 nhân), "
-            "chứng minh CPU không phải điểm nghẽn mà kích thước khóa/chữ ký (3,309 B) mới là đánh đổi chính."
+            "cho thấy chi phí xử lý CPU ở mức thấp, trong khi kích thước khóa và chữ ký (3,309 B) mới là yếu tố đánh đổi chính."
         )
 
         col_exp1, col_exp2 = st.columns(2)
@@ -2359,15 +2359,15 @@ with tab4:
             "lượng dữ liệu tối đa Server được phát đi trong lượt đầu tiên mà chưa cần dừng chờ Client phản hồi `ACK`."
         )
         st.warning(
-            "**2. Câu hỏi trọng tâm:** *\"CPU đã đủ nhanh rồi, vậy điểm nghẽn thật sự của ML-DSA trên mạng Internet là gì?\"*\n\n"
-            "→ **Kích thước gói tin & băng thông mạng mới là điểm nghẽn chính của ML-DSA** (đo trực tiếp từ đợt dựng chuỗi vừa chạy):\n"
-            f"- **ECDSA P-256:** chỉ tốn **{ec_d['auth_b']:,} B** (**{ec_d['mtu_pkts']} gói TCP**, `{ec_d['cwnd_pct']:.1f}%` cửa sổ) — siêu gọn.\n"
+            "**2. Phân tích điểm nghẽn truyền tải trên mạng:**\n\n"
+            "Mặc dù thời gian xử lý CPU thấp, **kích thước gói tin và băng thông mạng mới là hạn chế chính của ML-DSA** (đo trực tiếp từ đợt dựng chuỗi vừa chạy):\n"
+            f"- **ECDSA P-256:** tốn **{ec_d['auth_b']:,} B** (**{ec_d['mtu_pkts']} gói TCP**, `{ec_d['cwnd_pct']:.1f}%` cửa sổ) — kích thước rất nhỏ.\n"
             f"- **RSA-2048:** tốn **{rsa_d['auth_b']:,} B** (**{rsa_d['mtu_pkts']} gói TCP**, `{rsa_d['cwnd_pct']:.1f}%` cửa sổ).\n"
-            f"- **ML-DSA-44:** tăng lên **{m44_d['auth_b']:,} B** (**{m44_d['mtu_pkts']} gói TCP**, `{m44_d['cwnd_pct']:.1f}%` cửa sổ) — vẫn lọt trọn trong lượt gửi đầu.\n"
+            f"- **ML-DSA-44:** tăng lên **{m44_d['auth_b']:,} B** (**{m44_d['mtu_pkts']} gói TCP**, `{m44_d['cwnd_pct']:.1f}%` cửa sổ) — vẫn nằm trọn trong lượt gửi đầu tiên.\n"
             f"- **ML-DSA-65:** đạt **{m65_d['auth_b']:,} B** (**{m65_d['mtu_pkts']} gói TCP**, `{m65_d['cwnd_pct']:.1f}%` cửa sổ) — "
-            f"nằm sát mép 14.6 KB (chỉ còn dư **{m65_margin:,} B**, rất dễ tràn nếu cộng thêm phần mở rộng chứng chỉ hoặc ML-KEM).\n"
-            f"- **ML-DSA-87:** vọt lên **{m87_d['auth_b']:,} B** (**{m87_d['mtu_pkts']} gói TCP**, `{m87_d['cwnd_pct']:.1f}%` cửa sổ) — "
-            f"**vượt vạch 14.6 KB thêm {m87_over:,} B**, buộc kết nối HTTPS phải dừng chờ thêm **1 vòng truyền nhận (+1 RTT)** mới bắt tay xong."
+            f"tiệm cận ngưỡng 14.6 KB (phần dư **{m65_margin:,} B**, dễ vượt ngưỡng nếu kèm thêm phần mở rộng chứng chỉ hoặc ML-KEM).\n"
+            f"- **ML-DSA-87:** tăng lên **{m87_d['auth_b']:,} B** (**{m87_d['mtu_pkts']} gói TCP**, `{m87_d['cwnd_pct']:.1f}%` cửa sổ) — "
+            f"**vượt ngưỡng 14.6 KB thêm {m87_over:,} B**, làm kết nối TLS 1.3 phát sinh thêm **1 vòng truyền nhận (+1 RTT)** mới hoàn tất bắt tay."
         )
 
 # ==============================================================================
