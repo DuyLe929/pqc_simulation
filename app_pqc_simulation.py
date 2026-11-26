@@ -554,6 +554,7 @@ def trace_keygen_whitebox(dsa_name: str, xi_seed: bytes) -> dict[str, Any]:
         "rho_prime_hex": rho_prime.hex(),
         "k_hex": k_seed.hex(),
         "tr_hex": tr.hex(),
+        "sk_expanded_hex": sk_expanded.hex(),
         "samples": {
             "s1_0": _sample_poly_centered(s1, q, 6),
             "s2_0": _sample_poly_centered(s2, q, 6),
@@ -1432,21 +1433,30 @@ with tab1:
             ),
         ])
 
+        key_tag = k["pub_raw"][:8].hex()
         col_pub_box, col_priv_box = st.columns(2)
         with col_pub_box:
-            st.markdown(f"**Public Key — Khóa công khai (`{tr['pk_layout']['total']:,} B` Raw)**")
+            st.markdown(f"**Public Key — Khóa công khai (`{tr['pk_layout']['total']:,} B` Raw · `{len(k['pub_der']):,} B` DER)**")
             _render_byte_bar([
                 ("ρ (Seed A)", tr["pk_layout"]["rho"], C_CYAN),
                 ("t₁ (Phần cao nén d=13)", tr["pk_layout"]["t1"], C_BLUE),
             ])
-            st.code(
-                f"Seed ρ (32 B): {tr['rho_hex']}\n"
-                f"Vector t₁    : {k['pub_raw'][32:64].hex()} ... (+{tr['pk_layout']['t1'] - 32:,} B)",
-                language="text",
+            st.code(f"Seed ρ (32 B): {tr['rho_hex']}", language="text")
+            st.text_area(
+                f"Public Key Raw đầy đủ ({len(k['pub_raw']):,} B = {len(k['pub_raw'])*2:,} hex chars)",
+                value=k["pub_raw"].hex(),
+                height=140,
+                key=f"pk_raw_full_{key_tag}",
+            )
+            st.text_area(
+                f"Public Key DER SubjectPublicKeyInfo ({len(k['pub_der']):,} B)",
+                value=k["pub_der"].hex(),
+                height=95,
+                key=f"pk_der_full_{key_tag}",
             )
 
         with col_priv_box:
-            st.markdown(f"**Private Key — Seed `32 B` → Expanded SK (`{tr['sk_layout']['expanded_total']:,} B` RAM)**")
+            st.markdown(f"**Private Key — Seed `32 B` (`{len(k['priv_der'])} B` DER) → Expanded SK (`{tr['sk_layout']['expanded_total']:,} B` RAM)**")
             skl = tr["sk_layout"]
             _render_byte_bar([
                 ("ρ", skl["rho"], C_CYAN),
@@ -1461,6 +1471,27 @@ with tab1:
                 f"Khóa ký nội bộ K     : {tr['k_hex']}",
                 language="text",
             )
+            st.text_area(
+                f"Private Key Expanded đầy đủ ({skl['expanded_total']:,} B = {skl['expanded_total']*2:,} hex chars)",
+                value=tr["sk_expanded_hex"],
+                height=140,
+                key=f"sk_exp_full_{key_tag}",
+            )
+            st.text_area(
+                f"Private Key DER PKCS#8 ({len(k['priv_der']):,} B)",
+                value=k["priv_der"].hex(),
+                height=95,
+                key=f"sk_der_full_{key_tag}",
+            )
+    else:
+        key_tag = k["pub_raw"][:8].hex()
+        col_pub_fb, col_priv_fb = st.columns(2)
+        with col_pub_fb:
+            st.text_area(f"Public Key Raw ({len(k['pub_raw']):,} B)", value=k["pub_raw"].hex(), height=140, key=f"pk_raw_fb_{key_tag}")
+            st.text_area(f"Public Key DER ({len(k['pub_der']):,} B)", value=k["pub_der"].hex(), height=95, key=f"pk_der_fb_{key_tag}")
+        with col_priv_fb:
+            st.text_area(f"Private Seed ξ ({len(k['priv_raw']):,} B)", value=k["priv_raw"].hex(), height=95, key=f"sk_seed_fb_{key_tag}")
+            st.text_area(f"Private Key DER PKCS#8 ({len(k['priv_der']):,} B)", value=k["priv_der"].hex(), height=95, key=f"sk_der_fb_{key_tag}")
 
     with st.expander("Bảng đối chiếu kích thước khóa & payload: Cổ điển vs ML-KEM (FIPS 203) vs ML-DSA (FIPS 204)", expanded=True):
         key_comp_data = [
