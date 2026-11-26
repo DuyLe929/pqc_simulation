@@ -1,0 +1,6 @@
+streamlit>=1.42.0
+cryptography>=50.0.2
+dilithium-py>=1.5.1
+matplotlib>=3.9.0
+numpy>=2.0.0
+pandas>=2.2.0
