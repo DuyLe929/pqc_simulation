@@ -1404,31 +1404,31 @@ with tab1:
         _render_flow_cards([
             (
                 C_BLUE,
-                "BƯỚC 1 · SEED GỐC (32 B)",
-                "SHAKE-256 XOF",
-                f"Sinh ngẫu nhiên <code>ξ = {tr['xi_hex'][:12]}...</code> và băm mở rộng thành 3 hạt giống con.",
-                "Tách được <code>ρ</code> (32 B), <code>ρ'</code> (64 B) và khóa nội bộ <code>K</code> (32 B).",
+                "BƯỚC 1 · SINH SEED GỐC (32 B)",
+                "SHAKE-256",
+                f"Sinh 32 B ngẫu nhiên <code>ξ = {tr['xi_hex'][:10]}...</code> rồi mở rộng thành 3 hạt giống con.",
+                "Tạo <code>ρ</code> (dựng ma trận), <code>ρ'</code> (tạo khóa bí mật) và <code>K</code> (dùng khi ký).",
             ),
             (
                 C_CYAN,
-                f"BƯỚC 2 · MA TRẬN A ({p_kg['k']}×{p_kg['l']})",
-                "ExpandA + ExpandS",
-                f"Dựng ma trận công khai <b>A</b> từ <code>ρ</code>; sinh vector bí mật ngắn <b>s₁, s₂</b> ∈ [-{p_kg['eta']}, +{p_kg['eta']}].",
-                f"Mẫu 6 hệ số đầu của <code>s₁[0]</code>: <code>{smp['s1_0']}</code>.",
+                f"BƯỚC 2 · MA TRẬN & KHÓA BÍ MẬT",
+                f"Ma trận A ({p_kg['k']}×{p_kg['l']})",
+                f"Dựng ma trận công khai <b>A</b> từ <code>ρ</code>; sinh vector bí mật nhỏ <b>s₁, s₂</b> ∈ [-{p_kg['eta']}, +{p_kg['eta']}].",
+                f"Ví dụ hệ số nhỏ <code>s₁</code>: <code>{smp['s1_0'][:4]}...</code> (giữ tuyệt mật).",
             ),
             (
                 C_AMBER,
-                "BƯỚC 3 · HÀM 1 CHIỀU M-LWE",
+                "BƯỚC 3 · TÍNH & NÉN KHÓA CÔNG KHAI",
                 "t = A·s₁ + s₂ (mod q)",
-                "Nhân ma trận cộng nhiễu bí mật, sau đó tách <code>Power2Round (d=13)</code> thành phần cao và thấp.",
-                f"Thu phần cao <code>t₁[0]</code>: <code>{smp['t1_0'][:4]}...</code> (công khai) và <code>t₀</code> (bí mật).",
+                "Tính hàm 1 chiều <code>t</code> (khó đảo ngược), rồi cắt lấy bit cao <code>t₁</code> để giảm dung lượng.",
+                f"Công bố bit cao <code>t₁</code> (<code>{smp['t1_0'][:3]}...</code>); giữ bit thấp <code>t₀</code> trong SK.",
             ),
             (
                 C_GREEN,
                 "BƯỚC 4 · ĐÓNG GÓI PK & SK",
-                "PackPK + Seed Storage",
-                "Đóng gói <code>PK = ρ || t₁</code> để công bố; trên ổ cứng chỉ cần lưu đúng 32 B Seed <code>ξ</code>.",
-                f"PK = <b>{tr['pk_layout']['total']:,} B</b> (khớp OpenSSL) · Expanded SK = <b>{tr['sk_layout']['expanded_total']:,} B</b>.",
+                "Khớp 100% OpenSSL",
+                "Gộp <code>PK = ρ || t₁</code> để công bố; trên ổ đĩa chỉ cần lưu đúng 32 B Seed <code>ξ</code>.",
+                f"PK = <b>{tr['pk_layout']['total']:,} B</b> · Đĩa = <b>32 B</b> · RAM = <b>{tr['sk_layout']['expanded_total']:,} B</b>.",
             ),
         ])
 
@@ -1437,8 +1437,8 @@ with tab1:
         with col_pub_box:
             st.markdown(f"**Public Key — Khóa công khai (`{tr['pk_layout']['total']:,} B` Raw · `{len(k['pub_der']):,} B` DER)**")
             _render_byte_bar([
-                ("ρ (Seed A)", tr["pk_layout"]["rho"], C_CYAN),
-                ("t₁ (Phần cao nén d=13)", tr["pk_layout"]["t1"], C_BLUE),
+                ("ρ (Seed tạo A)", tr["pk_layout"]["rho"], C_CYAN),
+                ("t₁ (Bit cao nén)", tr["pk_layout"]["t1"], C_BLUE),
             ])
             st.code(f"Seed ρ (32 B): {tr['rho_hex']}", language="text")
             st.text_area(
@@ -1482,6 +1482,25 @@ with tab1:
                 height=95,
                 key=f"sk_der_full_{key_tag}",
             )
+
+        st.markdown(
+            """
+            <div style="background:#0F172A;border:1px solid #1E293B;border-radius:10px;padding:12px 16px;margin:6px 0 12px 0;font-size:13px;line-height:1.65;color:#CBD5E1;">
+              <div style="font-weight:700;color:#E2E8F0;margin-bottom:6px;">Chú thích nhanh các ký hiệu trong Public Key &amp; Private Key (FIPS 204)</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 24px;">
+                <div><code>ξ</code> <b>(32 B):</b> Seed gốc ngẫu nhiên lưu trên đĩa, tái tạo được toàn bộ cặp khóa.</div>
+                <div><code>K</code> <b>(32 B):</b> Khóa nội bộ dùng để trộn tạo số ngẫu nhiên an toàn khi ký.</div>
+                <div><code>ρ</code> <b>(32 B):</b> Seed công khai dùng để sinh lại ma trận <b>A</b> (thay vì lưu cả ma trận).</div>
+                <div><code>tr</code> <b>(64 B):</b> Mã băm <code>SHAKE-256(PK)</code> gắn Public Key vào chữ ký, chống tráo khóa.</div>
+                <div><code>t₁</code> <b>(Bit cao):</b> Phần dữ liệu chính của Public Key sau khi cắt bỏ 13 bit thấp (<code>d=13</code>).</div>
+                <div><code>s₁, s₂</code><b>:</b> Hai vector đa thức hệ số nhỏ — thành phần bí mật cốt lõi để ký.</div>
+                <div><code>ρ'</code> <b>(64 B):</b> Seed bí mật trung gian dùng trong Bước 2 để sinh <code>s₁, s₂</code>.</div>
+                <div><code>t₀</code> <b>(Bit thấp):</b> Phần bit lẻ bị tách khỏi <code>t</code>, lưu trong RAM để hỗ trợ tạo chữ ký.</div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
     else:
         key_tag = k["pub_raw"][:8].hex()
         col_pub_fb, col_priv_fb = st.columns(2)
