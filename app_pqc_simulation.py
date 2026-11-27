@@ -1,3 +1,4 @@
+import base64
 import datetime
 import io
 import os
@@ -1346,6 +1347,7 @@ def ensure_keys(module_key: str) -> None:
     if cur is None or cur["name"] != info["name"] or "kg_trace" not in cur:
         st.session_state["crypto_keys"] = _generate_active_keys(info)
         st.session_state["signature_bytes"] = None
+        st.session_state["tab1_sig"] = None
 
 
 ensure_keys(selected_module_key)
@@ -1372,7 +1374,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 with tab1:
     st.markdown(f"#### Quy trình Sinh khóa `{mod_info['name']}` (NIST FIPS 204 — Algorithm 6)")
     st.caption(
-        "Tính toán trực tiếp từ cùng 1 Seed 32-Byte ξ; Public Key sinh bởi lõi toán học mạng lưới khớp 100% từng bit với OpenSSL 3.5."
+        "Tính toán trực tiếp từ cùng 1 Seed 32-Byte ξ; Public Key sinh bởi lõi toán học mạng lưới khớp 100% từng bit với OpenSSL Native."
     )
 
     k = st.session_state["crypto_keys"]
@@ -1383,6 +1385,7 @@ with tab1:
         if st.button("Sinh cặp khóa mới", type="primary", width="stretch"):
             st.session_state["crypto_keys"] = _generate_active_keys(mod_info)
             st.session_state["signature_bytes"] = None
+            st.session_state["tab1_sig"] = None
             st.rerun()
 
     with col_k2:
@@ -1488,6 +1491,162 @@ with tab1:
         with col_priv_fb:
             st.text_area(f"Private Seed ξ ({len(k['priv_raw']):,} B)", value=k["priv_raw"].hex(), height=95, key=f"sk_seed_fb_{key_tag}")
             st.text_area(f"Private Key DER PKCS#8 ({len(k['priv_der']):,} B)", value=k["priv_der"].hex(), height=95, key=f"sk_der_fb_{key_tag}")
+
+    # --- LIVE SIGN & VERIFY PLAYGROUND RIGHT INSIDE TAB 1 ---
+    st.divider()
+    st.markdown(f"#### Ký số & Xác thực thông điệp với `{mod_info['name']}` (kèm Public Key & Private Key)")
+    st.caption(
+        "Nhập thông điệp bất kỳ, ký bằng cặp khóa hiện tại, xem đầy đủ Public Key / Private Key / Chữ ký và thử sửa 1 ký tự."
+    )
+
+    src_key = f"tab1_msg_src_{key_tag}"
+    if src_key not in st.session_state:
+        st.session_state[src_key] = "Post Quantum Crypto"
+
+    col_sv_l, col_sv_r = st.columns([1.15, 1.85])
+    with col_sv_l:
+        msg_input = st.text_area(
+            "Thông điệp gốc cần ký (Message M)",
+            height=90,
+            key=src_key,
+        )
+        if st.button("Ký số thông điệp (Sign)", type="primary", width="stretch", key=f"tab1_sign_btn_{key_tag}"):
+            msg_bytes = msg_input.encode("utf-8")
+            t_s = time.perf_counter()
+            sig_bytes = k["priv"].sign(msg_bytes)
+            sign_ms = (time.perf_counter() - t_s) * 1000.0
+            pub_pem = k["pub"].public_bytes(
+                serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+            ).decode("ascii")
+            priv_pem = k["priv"].private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+            ).decode("ascii")
+            st.session_state["tab1_sig"] = {
+                "key_tag": key_tag,
+                "orig_msg": msg_input,
+                "sig": sig_bytes,
+                "sign_ms": sign_ms,
+                "pub_raw": k["pub_raw"],
+                "priv_raw": k["priv_raw"],
+                "sk_expanded_bytes": bytes.fromhex(tr["sk_expanded_hex"]) if tr else k["priv_raw"],
+                "pub_pem": pub_pem,
+                "priv_pem": priv_pem,
+            }
+            st.session_state[f"tab1_recv_msg_{key_tag}"] = msg_input
+
+    sig_state = st.session_state.get("tab1_sig")
+    if sig_state and sig_state.get("key_tag") == key_tag:
+        sig_bytes = sig_state["sig"]
+        orig_msg = sig_state["orig_msg"]
+        layout_s = ML_DSA_SIG_LAYOUT[mod_info["name"]]
+        z_len = len(sig_bytes) - layout_s["c_tilde"] - layout_s["h_tail"]
+
+        with col_sv_r:
+            recv_key = f"tab1_recv_msg_{key_tag}"
+            if recv_key not in st.session_state:
+                st.session_state[recv_key] = orig_msg
+
+            c_btn1, c_btn2 = st.columns(2)
+            with c_btn1:
+                if st.button("Sửa 1 ký tự (Test giả mạo)", width="stretch", key=f"tab1_tamper_btn_{key_tag}"):
+                    cur_txt = st.session_state[recv_key]
+                    if cur_txt:
+                        ch0 = cur_txt[-1]
+                        repl = "X" if ch0 != "X" else "Y"
+                        st.session_state[recv_key] = cur_txt[:-1] + repl
+                    else:
+                        st.session_state[recv_key] = "X"
+                    st.rerun()
+            with c_btn2:
+                if st.button("Khôi phục thông điệp gốc", width="stretch", key=f"tab1_restore_btn_{key_tag}"):
+                    st.session_state[recv_key] = orig_msg
+                    st.rerun()
+
+            recv_msg = st.text_area(
+                "Thông điệp phía người nhận dùng để Verify (có thể tự sửa trực tiếp)",
+                height=90,
+                key=recv_key,
+            )
+
+            t_v = time.perf_counter()
+            try:
+                k["pub"].verify(sig_bytes, recv_msg.encode("utf-8"))
+                ver_ms = (time.perf_counter() - t_v) * 1000.0
+                is_valid = True
+            except InvalidSignature:
+                ver_ms = (time.perf_counter() - t_v) * 1000.0
+                is_valid = False
+
+            if is_valid:
+                st.success(
+                    f"XÁC THỰC HỢP LỆ (VALID) · Verify: {ver_ms:.3f} ms · Thông điệp nguyên vẹn 100% và khớp Public Key `{mod_info['name']}`."
+                )
+            else:
+                st.error(
+                    f"TỪ CHỐI CHỮ KÝ (InvalidSignature) · Verify: {ver_ms:.3f} ms · Phát hiện thông điệp đã bị thay đổi so với bản gốc đã ký!"
+                )
+
+        sm1, sm2, sm3, sm4 = st.columns(4)
+        sm1.metric("Thời gian Ký (Sign)", f"{sig_state['sign_ms']:.3f} ms")
+        sm2.metric("Thời gian Verify", f"{ver_ms:.3f} ms")
+        sm3.metric("Chữ ký σ", f"{len(sig_bytes):,} B")
+        sm4.metric("PK / Seed SK", f"{len(sig_state['pub_raw']):,} B / {len(sig_state['priv_raw'])} B")
+
+        _render_byte_bar([
+            ("c̃ (Challenge)", layout_s["c_tilde"], C_AMBER),
+            ("z (Vector phản hồi)", z_len, C_BLUE),
+            ("h (Hint)", layout_s["h_tail"], C_GREEN),
+        ])
+
+        fmt = st.radio(
+            "Định dạng hiển thị Chữ ký, Public Key & Private Key cho phiên ký này",
+            ["Hex", "Base64", "PEM (SPKI / PKCS#8)"],
+            horizontal=True,
+            key=f"tab1_sig_fmt_{key_tag}",
+        )
+        sig_disp = sig_bytes.hex() if fmt == "Hex" else base64.b64encode(sig_bytes).decode("ascii")
+        sig_unit = "hex chars" if fmt == "Hex" else "Base64 chars"
+        st.text_area(
+            f"Chữ ký số σ cho thông điệp \"{orig_msg[:48]}\" ({len(sig_bytes):,} B · {len(sig_disp):,} {sig_unit})",
+            value=sig_disp,
+            height=95,
+            key=f"tab1_sig_out_{key_tag}_{fmt}",
+        )
+
+        col_kout_pub, col_kout_sk = st.columns(2)
+        with col_kout_pub:
+            if fmt == "Hex":
+                pk_val = sig_state["pub_raw"].hex()
+                pk_lbl = f"Public Key (PK) dùng để Verify — Raw Hex ({len(sig_state['pub_raw']):,} B)"
+            elif fmt == "Base64":
+                pk_val = base64.b64encode(sig_state["pub_raw"]).decode("ascii")
+                pk_lbl = f"Public Key (PK) dùng để Verify — Base64 ({len(sig_state['pub_raw']):,} B)"
+            else:
+                pk_val = sig_state["pub_pem"]
+                pk_lbl = f"Public Key (PK) dùng để Verify — PEM SPKI ({len(k['pub_der']):,} B DER)"
+            st.text_area(pk_lbl, value=pk_val, height=130, key=f"tab1_msg_pk_{key_tag}_{fmt}")
+
+        with col_kout_sk:
+            sk_exp_b = sig_state["sk_expanded_bytes"]
+            if fmt == "Hex":
+                sk_val = (
+                    f"[Seed ξ (32 B lưu đĩa)]\n{sig_state['priv_raw'].hex()}\n\n"
+                    f"[Expanded SK ({len(sk_exp_b):,} B trong RAM)]\n{sk_exp_b.hex()}"
+                )
+                sk_lbl = f"Private Key (SK) đã dùng để Ký — Seed 32 B + Expanded SK ({len(sk_exp_b):,} B) Hex"
+            elif fmt == "Base64":
+                sk_val = (
+                    f"[Seed ξ (32 B lưu đĩa)]\n{base64.b64encode(sig_state['priv_raw']).decode('ascii')}\n\n"
+                    f"[Expanded SK ({len(sk_exp_b):,} B trong RAM)]\n{base64.b64encode(sk_exp_b).decode('ascii')}"
+                )
+                sk_lbl = f"Private Key (SK) đã dùng để Ký — Base64 ({len(sk_exp_b):,} B)"
+            else:
+                sk_val = sig_state["priv_pem"]
+                sk_lbl = f"Private Key (SK) đã dùng để Ký — PEM PKCS#8 ({len(k['priv_der'])} B DER)"
+            st.text_area(sk_lbl, value=sk_val, height=130, key=f"tab1_msg_sk_{key_tag}_{fmt}")
+    else:
+        with col_sv_r:
+            st.info("Bấm **Ký số thông điệp (Sign)** bên trái để ký thông điệp, xem đầy đủ **Chữ ký σ + Public Key + Private Key** và kiểm chứng sửa đổi 1 ký tự.")
 
     with st.expander("Bảng đối chiếu kích thước khóa & payload: Cổ điển vs ML-KEM (FIPS 203) vs ML-DSA (FIPS 204)", expanded=True):
         key_comp_data = [
